@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chemical Explosion Risk Predictor</title>
+<style>
+  :root {
+    --bg: #0f1420;
+    --card: #171d2b;
+    --border: #2a3346;
+    --text: #e8ecf5;
+    --muted: #8b93a7;
+    --safe: #22c55e;
+    --caution: #f59e0b;
+    --danger: #ef4444;
+    --accent: #6366f1;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 24px 16px 60px;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin-bottom: 4px; }
+  .subtitle { color: var(--muted); margin-bottom: 24px; font-size: 0.95rem; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px;
+    margin-bottom: 20px;
+  }
+  .card h2 { font-size: 1.05rem; margin: 0 0 6px; }
+  .card .hint { color: var(--muted); font-size: 0.82rem; margin: 0 0 14px; line-height: 1.45; }
+  .field { margin-bottom: 16px; }
+  .field label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  .field .val { color: var(--text); font-weight: 600; }
+  input[type="range"] { width: 100%; accent-color: var(--accent); }
+  .presets { display: flex; gap: 8px; flex-wrap: wrap; }
+  .preset-btn {
+    background: #1e263a;
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
+  .preset-btn:hover { border-color: var(--accent); }
+  button.predict {
+    width: 100%;
+    padding: 14px;
+    border: none;
+    border-radius: 10px;
+    background: var(--accent);
+    color: white;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button.predict:hover { opacity: 0.9; }
+  .result {
+    margin-top: 20px;
+    padding: 20px;
+    border-radius: 12px;
+    text-align: center;
+    display: none;
+  }
+  .result.show { display: block; }
+  .result .label { font-size: 1.6rem; font-weight: 800; margin-bottom: 6px; }
+  .result.safe { background: rgba(34,197,94,0.12); border: 1px solid var(--safe); }
+  .result.caution { background: rgba(245,158,11,0.12); border: 1px solid var(--caution); }
+  .result.danger { background: rgba(239,68,68,0.12); border: 1px solid var(--danger); }
+  .result.safe .label { color: var(--safe); }
+  .result.caution .label { color: var(--caution); }
+  .result.danger .label { color: var(--danger); }
+  .probs { margin-top: 10px; font-size: 0.85rem; color: var(--muted); }
+  .truth { margin-top: 10px; font-size: 0.85rem; color: var(--text); }
+  .truth.ok { color: var(--safe); }
+  .truth.bad { color: var(--caution); }
+  .note { font-size: 0.8rem; color: var(--muted); margin-top: 24px; line-height: 1.5; }
+  .error { background: rgba(239,68,68,0.12); border: 1px solid var(--danger); padding: 16px; border-radius: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Chemical Explosion Risk Predictor</h1>
+  <div class="subtitle">Random Forest classifier trained on the UCI Gas Sensor Array Drift Dataset (128 sensor features, 16 MOX sensors)</div>
+
+  <div class="card">
+    <h2>Load a real sensor reading</h2>
+    <p class="hint">Each button loads an actual row from the dataset's held-out test set (all 128 features) and runs the model on it.</p>
+    <div class="presets">
+      <button class="preset-btn" onclick="loadPreset('safe')">Safe example</button>
+      <button class="preset-btn" onclick="loadPreset('caution')">Caution example</button>
+      <button class="preset-btn" onclick="loadPreset('danger')">Danger example</button>
+      <button class="preset-btn" onclick="loadRandomSample()">Random real sample</button>
+      <button class="preset-btn" onclick="resetToMeans()">Reset to averages</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Top sensor readings</h2>
+    <p class="hint">The 10 features the Random Forest relies on most. Drag them to see how the prediction changes; the other 118 features keep the values of the reading you loaded.</p>
+    <div id="sliders"></div>
+  </div>
+
+  <button class="predict" onclick="predict()">Predict Risk</button>
+
+  <div class="result" id="result">
+    <div class="label" id="resultLabel"></div>
+    <div class="probs" id="resultProbs"></div>
+    <div class="truth" id="resultTruth"></div>
+  </div>
+
+  <div class="note">
+    Inputs are the dataset's sensor-response features (steady-state resistance change and exponential-moving-average rise/fall features), not raw ppm.
+    Risk classes are relative, per gas: Safe / Caution / Danger are the low / middle / high thirds of that gas's concentration range in the dataset.
+    The model was exported from the trained scikit-learn classifier with <span style="color:var(--text)">m2cgen</span> and runs entirely in your browser.
+  </div>
+</div>
+
+<script src="model.js"></script>
+<script src="presets.js"></script>
+<script>
+  const CLASS_NAMES = ["Safe", "Caution", "Danger"];
+
+  if (!window.APP_DATA) {
+    document.querySelector(".wrap").innerHTML =
+      '<div class="error"><b>presets.js is missing.</b><br>Generate it in Colab and put it in the same folder as index.html and model.js.</div>';
+    throw new Error("presets.js not found");
+  }
+
+  const D = window.APP_DATA;
+  const FEATURE_NAMES = D.featureNames;
+  const TOP_FEATURES = D.topFeatures;
+  const ranges = {};          // per-slider [min, max], widened when a loaded reading falls outside
+  let inputVector = D.means.slice();
+  let currentTruth = null;    // true class of a loaded random sample, or null
+
+  function idx(name) { return FEATURE_NAMES.indexOf(name); }
+
+  function fmt(v) {
+    return Math.abs(v) >= 100 ? v.toFixed(1) : v.toFixed(3);
+  }
+
+  function buildSliders() {
+    const container = document.getElementById("sliders");
+    TOP_FEATURES.forEach((name) => {
+      ranges[name] = D.ranges[name].slice();
+      const field = document.createElement("div");
+      field.className = "field";
+      field.innerHTML = `
+        <label>
+          <span>${name}</span>
+          <span class="val" id="val_${name}"></span>
+        </label>
+        <input type="range" id="slider_${name}" step="any"
+               oninput="onSlider('${name}', this.value)">
+      `;
+      container.appendChild(field);
+    });
+    syncSliders();
+  }
+
+  // Push inputVector values into the 10 sliders, widening ranges if needed.
+  function syncSliders() {
+    TOP_FEATURES.forEach((name) => {
+      const v = inputVector[idx(name)];
+      const r = ranges[name];
+      if (v < r[0]) r[0] = v;
+      if (v > r[1]) r[1] = v;
+      const slider = document.getElementById(`slider_${name}`);
+      slider.min = r[0];
+      slider.max = r[1];
+      slider.value = v;
+      document.getElementById(`val_${name}`).textContent = fmt(v);
+    });
+  }
+
+  function onSlider(name, value) {
+    const v = parseFloat(value);
+    inputVector[idx(name)] = v;
+    document.getElementById(`val_${name}`).textContent = fmt(v);
+    currentTruth = null; // the reading has been edited, so the stored label no longer applies
+  }
+
+  function setVector(vec, truth) {
+    inputVector = vec.slice();
+    currentTruth = truth === undefined ? null : truth;
+    syncSliders();
+    predict();
+  }
+
+  function loadPreset(type) { setVector(D.presets[type], null); }
+
+  function loadRandomSample() {
+    const s = D.samples[Math.floor(Math.random() * D.samples.length)];
+    setVector(s.x, s.label);
+  }
+
+  function resetToMeans() {
+    inputVector = D.means.slice();
+    currentTruth = null;
+    syncSliders();
+    document.getElementById("result").className = "result";
+  }
+
+  function predict() {
+    const probs = score(inputVector); // exported Random Forest, order = CLASS_NAMES
+    const maxIdx = probs.indexOf(Math.max(...probs));
+    const label = CLASS_NAMES[maxIdx];
+
+    const resultEl = document.getElementById("result");
+    resultEl.className = "result show " + label.toLowerCase();
+    document.getElementById("resultLabel").textContent = label;
+    document.getElementById("resultProbs").textContent = CLASS_NAMES
+      .map((name, i) => `${name}: ${(probs[i] * 100).toFixed(1)}%`)
+      .join("  |  ");
+
+    const truthEl = document.getElementById("resultTruth");
+    if (currentTruth === null) {
+      truthEl.textContent = "";
+      truthEl.className = "truth";
+    } else {
+      const ok = currentTruth === maxIdx;
+      truthEl.textContent = `Actual class in the dataset: ${CLASS_NAMES[currentTruth]} ` + (ok ? "(model correct)" : "(model wrong)");
+      truthEl.className = "truth " + (ok ? "ok" : "bad");
+    }
+  }
+
+  buildSliders();
+</script>
+</body>
+</html>
